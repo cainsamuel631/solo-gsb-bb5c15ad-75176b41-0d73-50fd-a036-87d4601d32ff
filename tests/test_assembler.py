@@ -87,3 +87,39 @@ def test_failed_segment_index_is_zero_based():
 def test_no_fewer_than_two_segments():
     with pytest.raises(ValueError):
         assemble(["学而时习之"])
+
+
+def test_preserve_wildcards_keeps_earlier_wildcard():
+    # preserve_wildcards=True：前段已有的 ? 不被后段已知字补字改写
+    r = assemble(["学而?习之", "时习之不亦"], preserve_wildcards=True)
+    assert r["text"] == "学而?习之不亦"
+    sources = r["sources"]
+    assert len(sources) == len(r["text"]) == 7
+    # ? 位置保留未辨认字，补字双方来源仍都保留
+    assert sources[2] == [{"segment": 0, "pos": 2}, {"segment": 1, "pos": 0}]
+    assert sources[3] == [{"segment": 0, "pos": 3}, {"segment": 1, "pos": 1}]
+    assert sources[4] == [{"segment": 0, "pos": 4}, {"segment": 1, "pos": 2}]
+    assert sources[5] == [{"segment": 1, "pos": 3}]
+    assert sources[6] == [{"segment": 1, "pos": 4}]
+
+
+def test_preserve_wildcards_accumulates_over_multiple_merges():
+    # 多步合并中前段的 ? 一直保留；后段新引入的 ? 被已知字覆盖时仍补字
+    r = assemble(
+        ["学而?习之", "时习之不", "之不亦乐乎"],
+        preserve_wildcards=True,
+    )
+    assert r["text"] == "学而?习之不亦乐乎"
+    assert r["sources"][2] == [{"segment": 0, "pos": 2}, {"segment": 1, "pos": 0}]
+
+    # 反向：后段的 ? 对齐前段已知字，仍取前段已知字（只保留前段的 ?）
+    r2 = assemble(["学而时习之", "时?之不亦"], preserve_wildcards=True)
+    assert r2["text"] == "学而时习之不亦"
+    assert r2["sources"][2] == [{"segment": 0, "pos": 2}, {"segment": 1, "pos": 0}]
+
+
+def test_preserve_wildcards_default_off():
+    # 默认行为不变：? 以后段已知字补字
+    r = assemble(["学而?习之", "时习之不亦"])
+    assert r["text"] == "学而时习之不亦"
+    assert r["sources"][2] == [{"segment": 0, "pos": 2}, {"segment": 1, "pos": 0}]

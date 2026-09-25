@@ -2,8 +2,10 @@
 
 ``left_segments``、``right_segments`` 各自沿用 :func:`app.assembler.assemble`
 的段数/长度限制与续接规则，**分别拼接**为两份稿子（各自的逐字来源相互独立、
-互不影响），随后对两份拼接稿做**全局**（两端固定、不允许自由端）逐字最小
-编辑对齐：
+互不影响）。拼接以 ``preserve_wildcards=True`` 进行：**前段已有的 ``?`` 不被
+同侧后段的已知字改写**，未辨认字位置原样保留在版本文本中（逐字来源仍记录补字
+双方），随后对两份**保留 ``?`` 的拼接稿**做**全局**（两端固定、不允许自由端）
+逐字最小编辑对齐：
 
 - 相同字、或任一侧为 ``?``（未辨认字）的字符对代价 0；
 - 替换（双方皆为已知字且不同）、删除左字、插入右字各代价 1。
@@ -57,9 +59,10 @@ def _pair_cost(a: str, b: str) -> int:
 
 
 def _assemble_side(side: str, segments: list[str]) -> dict:
-    """拼接一侧稿子，把续接失败包装为带侧别的 :class:`EditionAssemblyError`。"""
+    """拼接一侧稿子（保留前段已有的 ``?``，不做补字改写），
+    把续接失败包装为带侧别的 :class:`EditionAssemblyError`。"""
     try:
-        return assemble(segments)
+        return assemble(segments, preserve_wildcards=True)
     except AssemblyError as exc:
         raise EditionAssemblyError(side, exc.failed_segment) from exc
 
@@ -221,6 +224,10 @@ def _edit_alignment(left: str, right: str):
 
 def compare_editions(left_segments: list[str], right_segments: list[str]) -> dict:
     """对两份各 2～5 段的转写组分别拼接后做全局逐字最小编辑对勘。
+
+    两侧拼接均保留前段已有的 ``?``（不以同侧后段已知字补字），返回的
+    ``left_text`` / ``right_text`` 为保留 ``?`` 的版本文本，
+    ``total_cost``、``ambiguous``、``blocks`` 都按该文本及其坐标计算。
 
     返回 ``{"left_text", "right_text", "total_cost", "ambiguous",
     "blocks"}``；任一侧拼接未通过续接门槛抛出

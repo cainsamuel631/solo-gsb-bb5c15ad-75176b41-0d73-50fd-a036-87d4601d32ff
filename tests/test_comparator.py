@@ -8,7 +8,7 @@ from app.comparator import (
     compare_editions,
 )
 
-LEFT3 = ["学而?习之", "时习之不", "之不亦乐乎"]  # 学而时习之不亦乐乎
+LEFT3 = ["学而?习之", "时习之不", "之不亦乐乎"]  # 学而?习之不亦乐乎（保留前段 ?）
 
 
 def _blocks(left: str, right: str):
@@ -18,19 +18,86 @@ def _blocks(left: str, right: str):
 
 def test_identical_editions_have_no_blocks():
     r = compare_editions(LEFT3, LEFT3)
-    assert r["left_text"] == r["right_text"] == "学而时习之不亦乐乎"
+    # 两侧都保留前段的 ?，文本一致、零代价、无差异块
+    assert r["left_text"] == r["right_text"] == "学而?习之不亦乐乎"
     assert r["total_cost"] == 0
     assert r["ambiguous"] is False
     assert r["blocks"] == []
 
 
 def test_wildcard_only_difference_is_zero_cost_no_blocks():
-    # 左稿 ? 与右稿已知字配对代价 0：视为完全一致，差异块为空
+    # 左稿保留的 ? 与右稿已知字配对代价 0：视为完全一致，差异块为空
     r = compare_editions(["学而?习之", "时习之"], ["学而时习之", "时习之"])
-    assert r["left_text"] == r["right_text"] == "学而时习之"
+    assert r["left_text"] == "学而?习之"
+    assert r["right_text"] == "学而时习之"
     assert r["total_cost"] == 0
     assert r["ambiguous"] is False
     assert r["blocks"] == []
+
+
+def test_earlier_segment_wildcard_preserved_not_overwritten():
+    # 前段的 ? 被同侧后段已知字续接覆盖时，版本文本保留 ? 的位置；
+    # 逐字来源仍记录补字双方
+    r = compare_editions(
+        ["学而?习之", "时习之不亦"],           # 学而?习之不亦（? 不改写为 时）
+        ["学而时习之", "时习之不亦"],           # 学而时习之不亦
+    )
+    assert r["left_text"] == "学而?习之不亦"
+    assert r["right_text"] == "学而时习之不亦"
+    # ? 与 时 配对代价 0：零代价对勘、无差异块
+    assert r["total_cost"] == 0
+    assert r["ambiguous"] is False
+    assert r["blocks"] == []
+
+
+def test_preserved_wildcard_block_sources_consistent():
+    # 保留 ? 的文本上，差异块的区间坐标与逐字 sources 仍与输出文本一致
+    r = compare_editions(
+        ["学而?习之", "时习之不亦"],
+        ["学而?习之", "时习之不亦", "不亦乎"],
+    )
+    assert r["left_text"] == "学而?习之不亦"
+    assert r["right_text"] == "学而?习之不亦乎"
+    assert r["total_cost"] == 1
+    assert r["ambiguous"] is False
+    block = r["blocks"][0]
+    assert (block["left"]["start"], block["left"]["end"]) == (7, 7)
+    assert block["left"]["fragment"] == ""
+    assert block["left"]["sources"] == []
+    assert (block["right"]["start"], block["right"]["end"]) == (7, 8)
+    assert block["right"]["fragment"] == "乎"
+    assert block["right"]["sources"] == [[{"segment": 2, "pos": 2}]]
+
+
+def test_later_segment_wildcard_still_resolved_by_earlier_known():
+    # 反向情形不受影响：后段的 ? 仍以前段已知字补字（只保留前段的 ?）
+    r = compare_editions(
+        ["学而时习之", "时?之不亦"],            # 学而时习之不亦（后段 ? 被前段 习 补字）
+        ["学而?习之", "时习之不亦"],            # 学而?习之不亦（前段 ? 保留）
+    )
+    assert r["left_text"] == "学而时习之不亦"
+    assert r["right_text"] == "学而?习之不亦"
+    assert r["total_cost"] == 0
+    assert r["blocks"] == []
+
+
+def test_blocks_coordinates_match_preserved_text():
+    # 保留 ? 的文本上，差异块坐标与 fragment 仍与输出文本一致
+    r = compare_editions(
+        ["学而?习之", "时习之不亦"],            # 学而?习之不亦
+        ["学而时习之", "时习之不"],             # 学而时习之不
+    )
+    assert r["left_text"] == "学而?习之不亦"
+    assert r["right_text"] == "学而时习之不"
+    assert r["total_cost"] == 1
+    assert len(r["blocks"]) == 1
+    block = r["blocks"][0]
+    assert (block["left"]["start"], block["left"]["end"]) == (6, 7)
+    assert block["left"]["fragment"] == "亦"
+    assert block["left"]["sources"] == [[{"segment": 1, "pos": 4}]]
+    assert (block["right"]["start"], block["right"]["end"]) == (6, 6)
+    assert block["right"]["fragment"] == ""
+    assert block["right"]["sources"] == []
 
 
 def test_substitution_block():

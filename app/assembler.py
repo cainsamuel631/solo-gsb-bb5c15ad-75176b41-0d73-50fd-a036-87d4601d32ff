@@ -13,6 +13,13 @@
 每一步（合并第 k 段，k 从 1 开始）只有在最高对齐得分大于 0、且至少有 2 对
 相同已知字（``match`` 列）时才继续，否则抛出 :class:`AssemblyError`，
 由接口层转为 422；拼接为纯内存计算，失败即不返回任何结果。
+
+默认情况下左段（当前拼接文本）中的 ``?`` 会以右段（新并入段）对齐位置上的
+已知字补字。``preserve_wildcards=True`` 时改为**保留当前拼接文本中已有的
+``?``**：已拼入的字（含未辨认字）一律不被后段改写，新段只贡献新增字；
+逐字来源的记录规则不变（补字双方来源仍都保留）。该模式供
+:mod:`app.comparator` 双版本对勘使用，``/api/assemble`` 及其他接口保持
+默认补字行为。
 """
 
 from __future__ import annotations
@@ -39,11 +46,17 @@ def merge_once(
     cur_sources: list[list[dict]],
     nxt: str,
     seg_index: int,
+    *,
+    preserve_wildcards: bool = False,
 ) -> tuple[str, list[list[dict]], int]:
     """将当前拼接文本与第 ``seg_index`` 段对齐合并一步。
 
     返回 (新文本, 新逐字来源, 本步对齐得分)。不满足续接门槛时抛出
     :class:`AssemblyError`。
+
+    ``preserve_wildcards=True`` 时，当前拼接文本中已有的 ``?`` 不以新段
+    已知字改写（保留未辨认字位置）；为 ``False``（默认）时沿用补字规则，
+    以新段已知字替换 ``?``。两种模式下逐字来源的记录规则相同。
     """
     r = align(cur_text, nxt)
     same_known_pairs = sum(1 for c in r["columns"] if c["type"] == "match")
@@ -72,7 +85,11 @@ def merge_once(
         if lc is not None and rc is not None:
             # 与 aligner 的取字规则一致：左段为 ? 时取右字（双方皆 ? 时仍是 ?），
             # 其余情况（相同字 / 右段为 ? / 异字）取左字；来源保留双方。
-            ch = rc if lc == WILDCARD else lc
+            # preserve_wildcards=True 时左段已有的 ? 保留不改写，新段只贡献来源。
+            if lc == WILDCARD and not preserve_wildcards:
+                ch = rc
+            else:
+                ch = lc
             emit(ch, [*left_srcs, *right_srcs])
         elif lc is not None:  # 右段空缺：仅当前文本一方贡献
             emit(lc, left_srcs)
@@ -86,11 +103,14 @@ def merge_once(
     return "".join(out_chars), out_sources, r["score"]
 
 
-def assemble(segments: list[str]) -> dict:
+def assemble(segments: list[str], *, preserve_wildcards: bool = False) -> dict:
     """按阅读顺序拼接 2～5 段转写，返回 ``{"text": ..., "sources": ...}``。
 
     失败时抛出 :class:`AssemblyError`（``failed_segment`` 为失败段序号，
     从 0 开始）。
+
+    ``preserve_wildcards=True`` 时保留拼接过程中前段已有的 ``?``（不以
+    后段已知字补字），供双版本对勘使用；默认 ``False`` 沿用补字规则。
     """
     if len(segments) < 2:
         raise ValueError("至少需要 2 段转写")
@@ -100,5 +120,8 @@ def assemble(segments: list[str]) -> dict:
         [{"segment": 0, "pos": p}] for p in range(len(text))
     ]
     for k in range(1, len(segments)):
-        text, sources, _score = merge_once(text, sources, segments[k], k)
+        text, sources, _score = merge_once(
+            text, sources, segments[k], k,
+            preserve_wildcards=preserve_wildcards,
+        )
     return {"text": text, "sources": sources}

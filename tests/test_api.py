@@ -938,7 +938,8 @@ def test_compare_editions_endpoint_identical():
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["left_text"] == data["right_text"] == "学而时习之不亦乐乎"
+    # 两侧均保留前段的 ?，输出文本忠实于未辨认字位置
+    assert data["left_text"] == data["right_text"] == "学而?习之不亦乐乎"
     assert data["total_cost"] == 0
     assert data["ambiguous"] is False
     assert data["blocks"] == []
@@ -1001,8 +1002,37 @@ def test_compare_editions_wildcard_is_zero_cost():
     )
     assert resp.status_code == 200
     data = resp.json()
+    # 左稿前段的 ? 被同侧后段“时”续接覆盖，但版本文本保留 ? 不改写
+    assert data["left_text"] == "学而?习之"
+    assert data["right_text"] == "学而时习之"
     assert data["total_cost"] == 0 and data["blocks"] == []
     assert data["ambiguous"] is False
+
+
+def test_compare_editions_preserves_wildcard_with_real_difference():
+    # 保留 ? 的文本上计算差异块：左稿尾部多一“亦”，? 位不产生代价
+    resp = client.post(
+        "/api/compare-editions",
+        json={
+            "left_segments": ["学而?习之", "时习之不亦"],
+            "right_segments": ["学而时习之", "时习之不"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["left_text"] == "学而?习之不亦"
+    assert data["right_text"] == "学而时习之不"
+    assert data["total_cost"] == 1
+    assert data["ambiguous"] is False
+    assert len(data["blocks"]) == 1
+    block = data["blocks"][0]
+    assert block["left"] == {
+        "start": 6,
+        "end": 7,
+        "fragment": "亦",
+        "sources": [[{"segment": 1, "pos": 4}]],
+    }
+    assert block["right"] == {"start": 6, "end": 6, "fragment": "", "sources": []}
 
 
 def test_compare_editions_consecutive_nonzero_columns_merge():
