@@ -938,7 +938,8 @@ def test_compare_editions_endpoint_identical():
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["left_text"] == data["right_text"] == "学而时习之不亦乐乎"
+    # 段 0 的 ? 被同侧段 1 的“时”续接覆盖：版本文本保留前段 ?
+    assert data["left_text"] == data["right_text"] == "学而?习之不亦乐乎"
     assert data["total_cost"] == 0
     assert data["ambiguous"] is False
     assert data["blocks"] == []
@@ -1001,8 +1002,67 @@ def test_compare_editions_wildcard_is_zero_cost():
     )
     assert resp.status_code == 200
     data = resp.json()
+    # 左稿前段的 ? 被同侧后段“时”覆盖：版本文本保留 ?，与右稿已知字配对代价 0
+    assert data["left_text"] == "学而?习之"
+    assert data["right_text"] == "学而时习之"
     assert data["total_cost"] == 0 and data["blocks"] == []
     assert data["ambiguous"] is False
+
+
+def test_compare_editions_covered_wildcard_not_rewritten():
+    # 左稿段 0 的 ? 被段 1 的“乙”续接覆盖：保留 ? 后与右稿 X 配对代价 0；
+    # 若改写成“乙”则会误报代价 1 的替换块
+    resp = client.post(
+        "/api/compare-editions",
+        json={
+            "left_segments": ["甲?丙丁", "乙丙丁"],
+            "right_segments": ["甲X丙丁", "X丙丁"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["left_text"] == "甲?丙丁"
+    assert data["right_text"] == "甲X丙丁"
+    assert data["total_cost"] == 0
+    assert data["ambiguous"] is False
+    assert data["blocks"] == []
+
+
+def test_compare_editions_preserves_wildcard_with_block_elsewhere():
+    # 版本文本保留前段 ?，差异块坐标/原文/sources 与保留 ? 的输出文本一致
+    resp = client.post(
+        "/api/compare-editions",
+        json={
+            "left_segments": ["学而?习之", "时习之不"],
+            "right_segments": ["学而?习之", "时习之乎"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["left_text"] == "学而?习之不"
+    assert data["right_text"] == "学而?习之乎"
+    assert data["total_cost"] == 1
+    assert data["ambiguous"] is False
+    assert data["blocks"] == [
+        {
+            "left": {
+                "start": 5,
+                "end": 6,
+                "fragment": "不",
+                "sources": [[{"segment": 1, "pos": 3}]],
+            },
+            "right": {
+                "start": 5,
+                "end": 6,
+                "fragment": "乎",
+                "sources": [[{"segment": 1, "pos": 3}]],
+            },
+        }
+    ]
+    # /api/assemble 的补字行为不变
+    assert client.post(
+        "/api/assemble", json={"segments": ["学而?习之", "时习之不"]}
+    ).json()["text"] == "学而时习之不"
 
 
 def test_compare_editions_consecutive_nonzero_columns_merge():

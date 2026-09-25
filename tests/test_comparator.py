@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.assembler import assemble
 from app.comparator import (
     EditionAssemblyError,
     _edit_alignment,
@@ -18,19 +19,52 @@ def _blocks(left: str, right: str):
 
 def test_identical_editions_have_no_blocks():
     r = compare_editions(LEFT3, LEFT3)
-    assert r["left_text"] == r["right_text"] == "学而时习之不亦乐乎"
+    # 段 0 的 ? 被同侧段 1 的“时”续接覆盖：版本文本保留前段 ?
+    assert r["left_text"] == r["right_text"] == "学而?习之不亦乐乎"
     assert r["total_cost"] == 0
     assert r["ambiguous"] is False
     assert r["blocks"] == []
 
 
 def test_wildcard_only_difference_is_zero_cost_no_blocks():
-    # 左稿 ? 与右稿已知字配对代价 0：视为完全一致，差异块为空
+    # 左稿前段的 ? 被同侧后段“时”续接覆盖：版本文本保留 ?，
+    # 与右稿已知字配对代价 0：视为完全一致，差异块为空
     r = compare_editions(["学而?习之", "时习之"], ["学而时习之", "时习之"])
-    assert r["left_text"] == r["right_text"] == "学而时习之"
+    assert r["left_text"] == "学而?习之"
+    assert r["right_text"] == "学而时习之"
     assert r["total_cost"] == 0
     assert r["ambiguous"] is False
     assert r["blocks"] == []
+
+
+def test_covered_wildcard_not_rewritten_by_later_segment():
+    # 左稿段 0 的 ? 被段 1 的“乙”覆盖：若改写成“乙”，与右稿 X 配对会误报
+    # 代价 1 的替换块；保留 ? 后与已知字配对代价 0，零代价、无差异块
+    r = compare_editions(["甲?丙丁", "乙丙丁"], ["甲X丙丁", "X丙丁"])
+    assert r["left_text"] == "甲?丙丁"
+    assert r["right_text"] == "甲X丙丁"
+    assert r["total_cost"] == 0
+    assert r["ambiguous"] is False
+    assert r["blocks"] == []
+
+
+def test_version_text_preserves_wildcard_but_keeps_assemble_sources():
+    # 版本文本保留前段 ?，但逐字来源沿用 /api/assemble（? 与补字段双方都在）
+    r = compare_editions(["学而?习之", "时习之不"], ["学而?习之", "时习之乎"])
+    assert r["left_text"] == "学而?习之不"
+    assert r["right_text"] == "学而?习之乎"
+    assert r["total_cost"] == 1
+    assert r["ambiguous"] is False
+    # 差异块坐标、原文与 sources 与保留 ? 的输出文本一致
+    block = r["blocks"][0]
+    assert (block["left"]["start"], block["left"]["end"]) == (5, 6)
+    assert block["left"]["fragment"] == "不"
+    assert block["left"]["sources"] == [[{"segment": 1, "pos": 3}]]
+    assert (block["right"]["start"], block["right"]["end"]) == (5, 6)
+    assert block["right"]["fragment"] == "乎"
+    assert block["right"]["sources"] == [[{"segment": 1, "pos": 3}]]
+    # 拼接的补字行为不变：assemble 仍补为“时”，仅对勘版本文本保留 ?
+    assert assemble(["学而?习之", "时习之不"])["text"] == "学而时习之不"
 
 
 def test_substitution_block():

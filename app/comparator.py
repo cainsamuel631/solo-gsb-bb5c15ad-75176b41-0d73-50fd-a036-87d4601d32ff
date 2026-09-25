@@ -2,8 +2,11 @@
 
 ``left_segments``、``right_segments`` 各自沿用 :func:`app.assembler.assemble`
 的段数/长度限制与续接规则，**分别拼接**为两份稿子（各自的逐字来源相互独立、
-互不影响），随后对两份拼接稿做**全局**（两端固定、不允许自由端）逐字最小
-编辑对齐：
+互不影响）。对勘返回的**版本文本**逐位置取**最早段**的原始字形：拼接过程与
+逐字来源完全沿用 :func:`assemble` 的结果，仅当某位置最早段的字形为 ``?``
+（前段的未辨认字被同侧后段已知字续接覆盖）时保留该 ``?``，不改写为后段的
+补字——版本文本因此忠实反映各版本前段的未辨认字位置。随后对两份保留 ``?``
+的版本文本做**全局**（两端固定、不允许自由端）逐字最小编辑对齐：
 
 - 相同字、或任一侧为 ``?``（未辨认字）的字符对代价 0；
 - 替换（双方皆为已知字且不同）、删除左字、插入右字各代价 1。
@@ -18,7 +21,7 @@
 入边——最优路径上每格都满足 ``|i - j| <= G <= C``，故该带覆盖**全部**最优
 路径，代价、路径数与回溯都是精确的全局结果，又避免对整表做无谓的路径统计。
 
-把对齐列中**连续的非零代价列**合并为差异块，每块给出两侧在各自拼接稿上的
+把对齐列中**连续的非零代价列**合并为差异块，每块给出两侧在各自版本文本上的
 左闭右开区间、区间原文与逐字 sources（该侧在块内无字时区间为空、sources 为
 空列表）；零代价列用于分块。两份稿子完全一致（或仅差 ``?``）时差异块为空、
 总代价为 0。
@@ -62,6 +65,22 @@ def _assemble_side(side: str, segments: list[str]) -> dict:
         return assemble(segments)
     except AssemblyError as exc:
         raise EditionAssemblyError(side, exc.failed_segment) from exc
+
+
+def _version_text(segments: list[str], sources: list[list[dict]]) -> str:
+    """对勘用的版本文本：逐位置取**最早段**的原始字形。
+
+    拼接（对齐、续接门槛）与逐字来源完全沿用 :func:`assemble` 的结果，不重
+    新对齐；仅显示字形取各位置来源中最早段的原始字。与拼接文本的唯一差异：
+    某位置最早段为 ``?``（前段的未辨认字被同侧后段已知字续接覆盖）时保留
+    该 ``?``，不改写为后段的补字；其余情形（最早段已知、或各段皆为 ``?``）
+    与拼接文本一致。
+    """
+    chars = []
+    for srcs in sources:
+        first = min(srcs, key=lambda s: (s["segment"], s["pos"]))
+        chars.append(segments[first["segment"]][first["pos"]])
+    return "".join(chars)
 
 
 def _banded_cost(left: str, right: str, k: int) -> list[list[int]] | None:
@@ -222,14 +241,18 @@ def _edit_alignment(left: str, right: str):
 def compare_editions(left_segments: list[str], right_segments: list[str]) -> dict:
     """对两份各 2～5 段的转写组分别拼接后做全局逐字最小编辑对勘。
 
-    返回 ``{"left_text", "right_text", "total_cost", "ambiguous",
-    "blocks"}``；任一侧拼接未通过续接门槛抛出
+    两侧各自沿用 :func:`assemble` 的拼接与逐字来源，但返回的版本文本保留
+    前段被同侧后段已知字续接覆盖的 ``?``（见 :func:`_version_text`），跨
+    版本对齐即以保留 ``?`` 的文本计算。返回 ``{"left_text", "right_text",
+    "total_cost", "ambiguous", "blocks"}``；任一侧拼接未通过续接门槛抛出
     :class:`EditionAssemblyError`（携带 ``side`` 与 ``failed_segment``）。
     """
     left_result = _assemble_side("left", left_segments)
     right_result = _assemble_side("right", right_segments)
-    left, left_sources = left_result["text"], left_result["sources"]
-    right, right_sources = right_result["text"], right_result["sources"]
+    left_sources = left_result["sources"]
+    right_sources = right_result["sources"]
+    left = _version_text(left_segments, left_sources)
+    right = _version_text(right_segments, right_sources)
 
     total_cost, columns, ambiguous = _edit_alignment(left, right)
 
